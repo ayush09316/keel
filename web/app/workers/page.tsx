@@ -2,6 +2,7 @@
 
 import { api } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { StatStrip } from "@/components/StatStrip";
 import { Empty, Panel, StateBadge, Table, Td, Th, formatTime } from "@/components/ui";
 import type { StepState } from "@/lib/types";
 
@@ -25,7 +26,8 @@ export default function WorkersPage() {
 
   return (
     <>
-      <div className="pt-4" />
+      <StatStrip />
+      <div className="pt-6" />
       {workers.length === 0 ? (
         <Empty>
           No workers have registered. Run{" "}

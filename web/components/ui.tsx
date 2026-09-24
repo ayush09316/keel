@@ -12,7 +12,7 @@ const STATE_CLASS: Record<string, string> = {
   dead: "text-dead border-[#4d2240] bg-[#22121d]",
 };
 
-const BAR_CLASS: Record<StepState, string> = {
+export const BAR_CLASS: Record<StepState, string> = {
   succeeded: "bg-accent",
   running: "bg-info",
   ready: "bg-warn",
@@ -146,8 +146,41 @@ export function Code({ value }: { value: unknown }) {
   );
 }
 
+export function Legend({ states }: { states: StepState[] }) {
+  return (
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[10px] text-muted">
+      {states.map((state) => (
+        <li key={state} className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-[2px] ${BAR_CLASS[state]}`} aria-hidden />
+          {state}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function shortId(value: string, length = 8) {
   return value.slice(0, length);
+}
+
+/**
+ * `demo.services.TransientUpstreamError` is a module path with a class name on
+ * the end. Only the end tells a reader anything, and the front of it was
+ * crowding out the message it belongs to.
+ */
+export function shortErrorType(value: string) {
+  if (!value) return "";
+  const parts = value.split(".");
+  return parts[parts.length - 1] ?? value;
+}
+
+/** Truncate on a word boundary with a real ellipsis, not a hard slice. */
+export function truncate(value: string, limit: number) {
+  const text = (value ?? "").trim();
+  if (text.length <= limit) return text;
+  const cut = text.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
 export function formatDuration(seconds: number | null) {
@@ -166,5 +199,15 @@ export function lastLine(text: string, limit = 90) {
   const trimmed = (text ?? "").trim();
   if (!trimmed) return "";
   const lines = trimmed.split("\n");
-  return lines[lines.length - 1].slice(0, limit);
+  const line = lines[lines.length - 1] ?? "";
+  const colon = line.indexOf(": ");
+  const message = colon > 0 && colon < 60 ? line.slice(colon + 2) : line;
+  return truncate(message, limit);
+}
+
+export function formatDateTime(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  const day = date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  return `${day} ${date.toLocaleTimeString("en-GB", { hour12: false })}`;
 }

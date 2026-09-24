@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 
 import { api } from "@/lib/api";
-import type { RunState, WorkflowRun } from "@/lib/types";
+import type { RunState, StepState, WorkflowRun } from "@/lib/types";
 import { usePoll } from "@/lib/usePoll";
+import { StatStrip } from "@/components/StatStrip";
 import {
   Button,
   Empty,
+  Legend,
   StateBadge,
   StepBar,
   Table,
@@ -17,8 +19,11 @@ import {
   formatDuration,
   formatTime,
   lastLine,
+  shortErrorType,
   shortId,
 } from "@/components/ui";
+
+const LEGEND: StepState[] = ["succeeded", "running", "ready", "dead", "cancelled", "blocked"];
 
 const STATES: RunState[] = [
   "pending",
@@ -62,28 +67,36 @@ export default function RunsPage() {
 
   return (
     <>
-      <div className="mb-3.5 flex flex-wrap gap-2 pt-4">
-        <FilterPill active={!state} onClick={() => setState("")}>
-          all
-        </FilterPill>
-        {STATES.map((s) => (
-          <FilterPill key={s} active={state === s} onClick={() => setState(s)}>
-            {s}
+      <StatStrip />
+
+      <div className="mb-4 mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          <FilterPill active={!state} onClick={() => setState("")}>
+            all
           </FilterPill>
-        ))}
+          {STATES.map((s) => (
+            <FilterPill key={s} active={state === s} onClick={() => setState(s)}>
+              {s}
+            </FilterPill>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {(workflows ?? []).map((flow) => (
+            <Button
+              key={flow.name}
+              variant="primary"
+              disabled={starting}
+              onClick={() => void start(flow.name)}
+            >
+              start {flow.name}
+            </Button>
+          ))}
+        </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {(workflows ?? []).map((flow) => (
-          <Button
-            key={flow.name}
-            variant="primary"
-            disabled={starting}
-            onClick={() => void start(flow.name)}
-          >
-            start {flow.name}
-          </Button>
-        ))}
+      <div className="mb-2 flex justify-end">
+        <Legend states={LEGEND} />
       </div>
 
       {runs.length === 0 ? (
@@ -127,8 +140,15 @@ export default function RunsPage() {
                 <Td className="hidden font-mono text-xs text-muted sm:table-cell">
                   {formatDuration(run.duration_seconds)}
                 </Td>
-                <Td className="font-mono text-xs text-muted">
-                  {lastLine(run.error, 50)}
+                <Td className="max-w-[22rem] font-mono text-xs text-muted">
+                  {run.error && (
+                    <span title={run.error}>
+                      <span className="text-bad">
+                        {shortErrorType(run.error.split(":")[0] ?? "")}
+                      </span>{" "}
+                      {lastLine(run.error, 44)}
+                    </span>
+                  )}
                 </Td>
               </tr>
             ))}

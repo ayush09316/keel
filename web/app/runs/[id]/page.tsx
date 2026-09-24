@@ -5,6 +5,7 @@ import { use } from "react";
 
 import { api } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { StepTimeline } from "@/components/StepTimeline";
 import {
   Button,
   Code,
@@ -14,9 +15,11 @@ import {
   Table,
   Td,
   Th,
+  formatDateTime,
   formatDuration,
   formatTime,
   lastLine,
+  shortErrorType,
   shortId,
 } from "@/components/ui";
 
@@ -37,13 +40,13 @@ export default function RunDetailPage({
 
   return (
     <>
-      <p className="pt-4 font-mono text-xs text-muted">
-        <Link href="/" className="text-info hover:underline">
+      <p className="pt-5 font-mono text-xs text-muted">
+        <Link href="/" className="text-info transition-colors hover:text-accent hover:underline">
           ← runs
         </Link>
       </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      <div className="mt-3 flex flex-wrap items-center gap-3 fade-in">
         <h2 className="text-base font-semibold">{run.workflow}</h2>
         <StateBadge state={run.state} />
         <span className="font-mono text-xs text-muted">{run.id}</span>
@@ -59,18 +62,23 @@ export default function RunDetailPage({
         )}
       </div>
 
-      <dl className="mt-4 grid grid-cols-[150px_1fr] gap-x-4 gap-y-1.5 font-mono text-xs">
-        <Meta label="created">{new Date(run.created_at).toLocaleString()}</Meta>
-        <Meta label="started">{formatTime(run.started_at)}</Meta>
-        <Meta label="finished">{formatTime(run.finished_at)}</Meta>
-        <Meta label="duration">{formatDuration(run.duration_seconds)}</Meta>
-        <Meta label="idempotency key">{run.idempotency_key ?? "—"}</Meta>
-        {run.error && (
-          <Meta label="error">
-            <span className="text-bad">{lastLine(run.error, 200)}</span>
-          </Meta>
-        )}
-      </dl>
+      <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,320px)_1fr]">
+        <dl className="grid h-fit grid-cols-[130px_1fr] gap-x-4 gap-y-1.5 font-mono text-xs">
+          <Meta label="created">{formatDateTime(run.created_at)}</Meta>
+          <Meta label="started">{formatDateTime(run.started_at)}</Meta>
+          <Meta label="finished">{formatDateTime(run.finished_at)}</Meta>
+          <Meta label="duration">{formatDuration(run.duration_seconds)}</Meta>
+          <Meta label="idempotency key">{run.idempotency_key ?? "—"}</Meta>
+        </dl>
+
+        <StepTimeline run={run} />
+      </div>
+
+      {run.error && (
+        <p className="mt-4 rounded-lg border border-[#4d2222] bg-[#221212] px-3 py-2 font-mono text-xs text-bad">
+          {lastLine(run.error, 220)}
+        </p>
+      )}
 
       <Panel title="Steps">
         <Table>
@@ -117,11 +125,15 @@ export default function RunDetailPage({
                     "—"
                   )}
                 </Td>
-                <Td className="font-mono text-[11px] text-muted">
-                  {step.error_type && (
-                    <span className="text-dead">{step.error_type} </span>
+                <Td className="max-w-[20rem] font-mono text-[11px] text-muted">
+                  {step.error && (
+                    <span title={step.error}>
+                      {step.error_type && (
+                        <span className="text-dead">{shortErrorType(step.error_type)} </span>
+                      )}
+                      {lastLine(step.error, 54)}
+                    </span>
                   )}
-                  {lastLine(step.error, 60)}
                 </Td>
               </tr>
             ))}

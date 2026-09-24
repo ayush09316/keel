@@ -265,11 +265,16 @@ demo/
 web/             Next.js 15 + TypeScript + Tailwind dashboard
 ```
 
-The dashboard shows runs with a per-step progress bar, a run's step timeline
-with attempt counts and live lease expiry, the accumulated context, the outbox
-with publish state, the dead-letter queue with a replay button, and workers with
-their heartbeat — so a worker you kill in one terminal goes stale on screen
-while its steps go back to `ready`.
+The dashboard shows runs with a per-step progress bar, the accumulated context,
+the outbox with publish state, the dead-letter queue with a replay button, and
+workers with their heartbeat — so a worker you kill in one terminal goes stale
+on screen while its steps go back to `ready`.
+
+A run's detail page draws a **timeline** rather than another table, because the
+step list tells you which steps failed but not that the run spent nine of its
+twelve seconds sitting in backoff. On an engine whose subject is retries and
+leases, that gap is the thing worth seeing, and attempts are marked on the bar
+where they happened.
 
 ---
 

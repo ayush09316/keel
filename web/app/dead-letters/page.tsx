@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { api } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { StatStrip } from "@/components/StatStrip";
 import {
   Button,
   Empty,
@@ -29,7 +30,8 @@ export default function DeadLettersPage() {
 
   return (
     <>
-      <div className="mb-4 flex gap-2 pt-4">
+      <StatStrip />
+      <div className="mb-4 mt-6 flex gap-2">
         <Toggle active={openOnly} onClick={() => setOpenOnly(true)}>
           open
         </Toggle>
