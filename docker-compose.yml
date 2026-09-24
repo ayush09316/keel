@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keel
+      POSTGRES_USER: keel
+      POSTGRES_PASSWORD: keel
+    ports:
+      - "5432:5432"
+    volumes:
+      - keel-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keel -d keel"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    environment: &keel-env
+      KEEL_DB_HOST: postgres
+      KEEL_DB_NAME: keel
+      KEEL_DB_USER: keel
+      KEEL_DB_PASSWORD: keel
+      KEEL_LEASE_SECONDS: "30"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: python manage.py runworker
+    environment: *keel-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+
+  relay:
+    build: .
+    command: python manage.py runrelay
+    environment: *keel-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  keel-pgdata:

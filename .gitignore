@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+.env
+var/
+.pytest_cache/
+.DS_Store
+
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
