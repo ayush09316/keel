@@ -1,10 +1,39 @@
 from rest_framework import serializers
 
-from .models import DeadLetter, OutboxEvent, StepRun, Worker, WorkflowRun
+from .models import DeadLetter, OutboxEvent, StepAttempt, StepRun, Worker, WorkflowRun
+
+
+class StepAttemptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StepAttempt
+        fields = [
+            "id",
+            "attempt",
+            "worker_id",
+            "outcome",
+            "started_at",
+            "finished_at",
+            "reclaimed_at",
+            "fenced_at",
+            "effects_performed",
+            "effects_replayed",
+            "events",
+            "error_type",
+            "error",
+        ]
 
 
 class StepRunSerializer(serializers.ModelSerializer):
     attempts_left = serializers.IntegerField(read_only=True)
+    attempts = StepAttemptSerializer(many=True, read_only=True)
+    dead_letter = serializers.SerializerMethodField()
+
+    def get_dead_letter(self, step):
+        try:
+            dead = step.dead_letter
+        except DeadLetter.DoesNotExist:
+            return None
+        return {"id": dead.id, "replayed_at": dead.replayed_at, "replay_count": dead.replay_count}
 
     class Meta:
         model = StepRun
@@ -28,6 +57,8 @@ class StepRunSerializer(serializers.ModelSerializer):
             "error",
             "started_at",
             "finished_at",
+            "attempts",
+            "dead_letter",
         ]
 
 
@@ -45,6 +76,13 @@ class OutboxEventSerializer(serializers.ModelSerializer):
             "publish_attempts",
             "last_error",
         ]
+
+
+class OutboxListSerializer(OutboxEventSerializer):
+    workflow = serializers.CharField(source="run.workflow", read_only=True, default=None)
+
+    class Meta(OutboxEventSerializer.Meta):
+        fields = ["run", "workflow"] + OutboxEventSerializer.Meta.fields
 
 
 class StepSummarySerializer(serializers.ModelSerializer):
@@ -107,6 +145,19 @@ class DeadLetterSerializer(serializers.ModelSerializer):
 
 
 class WorkerSerializer(serializers.ModelSerializer):
+    leases = serializers.SerializerMethodField()
+    held = serializers.SerializerMethodField()
+
+    def held_steps(self, worker):
+        return self.context.get("held", {}).get(worker.id, [])
+
+    def get_leases(self, worker):
+        return len(self.held_steps(worker))
+
+    def get_held(self, worker):
+        steps = self.held_steps(worker)
+        return steps[0] if steps else None
+
     class Meta:
         model = Worker
         fields = [
@@ -119,4 +170,6 @@ class WorkerSerializer(serializers.ModelSerializer):
             "succeeded",
             "failed",
             "current_step",
+            "leases",
+            "held",
         ]

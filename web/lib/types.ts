@@ -13,6 +13,30 @@ export type StepState =
   | "dead"
   | "cancelled";
 
+export type AttemptOutcome =
+  | "running"
+  | "succeeded"
+  | "retry"
+  | "dead"
+  | "lease_expired"
+  | "fenced";
+
+export interface StepAttempt {
+  id: number;
+  attempt: number;
+  worker_id: string;
+  outcome: AttemptOutcome;
+  started_at: string;
+  finished_at: string | null;
+  reclaimed_at: string | null;
+  fenced_at: string | null;
+  effects_performed: number;
+  effects_replayed: number;
+  events: number;
+  error_type: string;
+  error: string;
+}
+
 export interface StepRun {
   id: string;
   name: string;
@@ -33,6 +57,8 @@ export interface StepRun {
   error: string;
   started_at: string | null;
   finished_at: string | null;
+  attempts: StepAttempt[];
+  dead_letter: { id: number; replayed_at: string | null; replay_count: number } | null;
 }
 
 export interface OutboxEvent {
@@ -45,6 +71,11 @@ export interface OutboxEvent {
   published_at: string | null;
   publish_attempts: number;
   last_error: string;
+}
+
+export interface OutboxListEvent extends OutboxEvent {
+  run: string | null;
+  workflow: string | null;
 }
 
 export interface StepSummary {
@@ -98,6 +129,27 @@ export interface Worker {
   succeeded: number;
   failed: number;
   current_step: string;
+  leases: number;
+  held: {
+    run: string;
+    step: string;
+    attempt: number;
+    lease_expires_at: string | null;
+    heartbeat_at: string | null;
+  } | null;
+}
+
+export interface Throughput {
+  bucket_seconds: number;
+  until: string;
+  total: number[];
+  workers: Record<string, number[]>;
+}
+
+export interface Meta {
+  readonly: boolean;
+  readonly_message: string;
+  workflows: string[];
 }
 
 export interface Stats {

@@ -70,7 +70,7 @@ STATIC_URL = "static/"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "DEFAULT_PERMISSION_CLASSES": ["engine.permissions.ReadOnlyDemo"],
     "UNAUTHENTICATED_USER": None,
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
@@ -89,6 +89,13 @@ KEEL = {
     "OUTBOX_SINK": os.environ.get("KEEL_OUTBOX_SINK", "engine.sinks.FileSink"),
     "OUTBOX_SINK_PATH": os.environ.get("KEEL_OUTBOX_SINK_PATH", str(BASE_DIR / "var" / "published.jsonl")),
     "WORKER_STALE_SECONDS": int(os.environ.get("KEEL_WORKER_STALE_SECONDS", "60")),
+    "CHAOS_RECORDING_PATH": os.environ.get(
+        "KEEL_CHAOS_RECORDING", str(BASE_DIR / "var" / "chaos" / "latest.json")
+    ),
+    "CHAOS_SAMPLE_PATH": os.environ.get(
+        "KEEL_CHAOS_SAMPLE", str(BASE_DIR / "web" / "public" / "chaos" / "sample.json")
+    ),
+    "READONLY": os.environ.get("KEEL_READONLY", "0") == "1",
 }
 
 LOGGING = {

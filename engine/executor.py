@@ -8,7 +8,9 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from .attempts import close_attempt, fence_attempt, summary_line
 from .context import StepContext
+from .models import AttemptOutcome
 from .errors import LeaseLostError, NonRetryableError
 from .models import OutboxEvent, RunState, StepRun, StepState, WorkflowRun
 from .queue import bury
@@ -106,6 +108,15 @@ class Executor:
                 )
                 if not updated:
                     raise LeaseLostError(step.name)
+                close_attempt(
+                    step,
+                    self.worker_id,
+                    AttemptOutcome.SUCCEEDED,
+                    now,
+                    effects_performed=len(ctx._effects_performed),
+                    effects_replayed=len(ctx._effects_replayed),
+                    events=len(ctx.pending_events()),
+                )
 
                 context = dict(locked_run.context or {})
                 context[step.name] = output
@@ -145,6 +156,13 @@ class Executor:
                         ignore_conflicts=True,
                     )
         except LeaseLostError:
+            fence_attempt(
+                step,
+                self.worker_id,
+                now,
+                effects_performed=len(ctx._effects_performed),
+                effects_replayed=len(ctx._effects_replayed),
+            )
             logger.warning(
                 "lease lost on %s/%s attempt=%d - discarding result",
                 run.workflow,
@@ -186,8 +204,17 @@ class Executor:
                     raise LeaseLostError(step.name)
 
                 exhausted = locked_step.attempt >= locked_step.max_attempts
+                attempt_fields = {
+                    "effects_performed": len(ctx._effects_performed),
+                    "effects_replayed": len(ctx._effects_replayed),
+                    "error_type": error_type[:128],
+                    "error": summary_line(error_text),
+                }
                 if permanent or exhausted:
                     reason = "non-retryable" if permanent else "attempts exhausted"
+                    close_attempt(
+                        locked_step, self.worker_id, AttemptOutcome.DEAD, now, **attempt_fields
+                    )
                     bury(
                         locked_run,
                         locked_step,
@@ -199,6 +226,9 @@ class Executor:
                         DEAD, step.name, str(run.id), step.attempt, error=error_type
                     )
 
+                close_attempt(
+                    locked_step, self.worker_id, AttemptOutcome.RETRY, now, **attempt_fields
+                )
                 delay = backoff_seconds(locked_step.attempt)
                 locked_step.state = StepState.READY
                 locked_step.lease_owner = None
@@ -221,6 +251,13 @@ class Executor:
                     ]
                 )
         except LeaseLostError:
+            fence_attempt(
+                step,
+                self.worker_id,
+                now,
+                effects_performed=len(ctx._effects_performed),
+                effects_replayed=len(ctx._effects_replayed),
+            )
             logger.warning("lease lost on %s/%s during failure commit", run.workflow, step.name)
             return Outcome(LEASE_LOST, step.name, str(run.id), step.attempt)
 

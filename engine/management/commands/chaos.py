@@ -5,17 +5,21 @@ import subprocess
 import sys
 import time
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import connection
 
-from engine.models import RunState, WorkflowRun
+from engine.management.commands import verify
+from engine.models import OutboxEvent, RunState, WorkflowRun
+from engine.recorder import ChaosRecorder
 from engine.registry import autodiscover
 
 MANAGED_TABLES = [
     "keel_dead_letter",
     "keel_outbox_event",
     "keel_idempotency_record",
+    "keel_step_attempt",
     "keel_step_run",
     "keel_workflow_run",
     "keel_worker",
@@ -28,8 +32,9 @@ MANAGED_TABLES = [
 
 
 class Victim:
-    def __init__(self, process):
+    def __init__(self, process, worker_id):
         self.process = process
+        self.worker_id = worker_id
         self.frozen_until = None
 
     @property
@@ -61,6 +66,9 @@ class Command(BaseCommand):
         parser.add_argument("--no-reset", action="store_true")
         parser.add_argument("--no-kill", action="store_true")
         parser.add_argument("--no-freeze", action="store_true")
+        parser.add_argument("--record", default=None)
+        parser.add_argument("--no-record", action="store_true")
+        parser.add_argument("--sample-every", type=float, default=0.5)
 
     def truncate(self):
         with connection.cursor() as cursor:
@@ -76,6 +84,7 @@ class Command(BaseCommand):
         return env
 
     def spawn_worker(self, index, options, env):
+        worker_id = f"chaos-{index}-{random.randint(1000, 9999)}"
         return Victim(
             subprocess.Popen(
                 [
@@ -83,15 +92,36 @@ class Command(BaseCommand):
                     "manage.py",
                     "runworker",
                     "--id",
-                    f"chaos-{index}-{random.randint(1000, 9999)}",
+                    worker_id,
                     "--lease",
                     str(options["lease"]),
                 ],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-            )
+            ),
+            worker_id,
         )
+
+    def recorder_for(self, options, freeze_for):
+        if options["no_record"]:
+            return None
+        path = options["record"] or settings.KEEL["CHAOS_RECORDING_PATH"]
+        config = {
+            key: options[key]
+            for key in (
+                "runs",
+                "workers",
+                "kill_every",
+                "freeze_every",
+                "duration",
+                "lease",
+                "failure_rate",
+                "latency_ms",
+            )
+        }
+        config["freeze_for"] = freeze_for
+        return ChaosRecorder(path, config, interval=options["sample_every"])
 
     def spawn_relay(self, env):
         return subprocess.Popen(
@@ -118,8 +148,13 @@ class Command(BaseCommand):
 
         freeze_for = options["freeze_for"] or options["lease"] * 1.8
         env = self.child_env(options)
+        recorder = self.recorder_for(options, freeze_for)
         workers = [self.spawn_worker(i, options, env) for i in range(options["workers"])]
         relay = self.spawn_relay(env)
+        if recorder:
+            for slot, victim in enumerate(workers):
+                recorder.lane(slot, victim.worker_id, victim.process.pid)
+            recorder.sample(force=True)
         self.stdout.write(
             f"spawned {len(workers)} workers + relay "
             f"(lease={options['lease']}s step_latency={options['latency_ms']}ms "
@@ -137,10 +172,18 @@ class Command(BaseCommand):
             while time.monotonic() - started < options["duration"]:
                 now = time.monotonic()
 
-                for victim in workers:
+                for slot, victim in enumerate(workers):
                     if victim.frozen and now >= victim.frozen_until and victim.alive:
                         victim.process.send_signal(signal.SIGCONT)
                         victim.frozen_until = None
+                        if recorder:
+                            recorder.set_status(slot, "alive")
+                            recorder.event(
+                                "sigcont", slot=slot, pid=victim.process.pid, worker=victim.worker_id
+                            )
+
+                if recorder:
+                    recorder.sample()
 
                 pending = self.pending_runs()
                 if pending == 0:
@@ -154,8 +197,18 @@ class Command(BaseCommand):
                     if candidates:
                         index = random.choice(candidates)
                         pid = workers[index].process.pid
+                        held = recorder.holding().get(workers[index].worker_id) if recorder else None
                         workers[index].process.send_signal(signal.SIGKILL)
                         kills += 1
+                        if recorder:
+                            recorder.event(
+                                "sigkill",
+                                slot=index,
+                                pid=pid,
+                                worker=workers[index].worker_id,
+                                held=held[0] if held else None,
+                                in_flight=pending,
+                            )
                         self.stdout.write(
                             self.style.WARNING(
                                 f"  SIGKILL pid={pid}  ({pending} runs in flight)"
@@ -163,15 +216,30 @@ class Command(BaseCommand):
                         )
                         workers[index] = self.spawn_worker(spawn_index, options, env)
                         spawn_index += 1
+                        if recorder:
+                            recorder.lane(
+                                index, workers[index].worker_id, workers[index].process.pid
+                            )
                     next_kill = now + options["kill_every"]
 
                 if attacking and not options["no_freeze"] and now >= next_freeze:
                     candidates = [i for i, v in enumerate(workers) if v.alive and not v.frozen]
                     if len(candidates) > 1:
                         index = random.choice(candidates)
+                        held = recorder.holding().get(workers[index].worker_id) if recorder else None
                         workers[index].process.send_signal(signal.SIGSTOP)
                         workers[index].frozen_until = now + freeze_for
                         freezes += 1
+                        if recorder:
+                            recorder.set_status(index, "frozen")
+                            recorder.event(
+                                "sigstop",
+                                slot=index,
+                                pid=workers[index].process.pid,
+                                worker=workers[index].worker_id,
+                                held=held[0] if held else None,
+                                freeze_for=freeze_for,
+                            )
                         self.stdout.write(
                             self.style.WARNING(
                                 f"  SIGSTOP pid={workers[index].process.pid} for {freeze_for:.0f}s "
@@ -180,16 +248,27 @@ class Command(BaseCommand):
                         )
                     next_freeze = now + options["freeze_every"]
 
-                time.sleep(0.4)
+                time.sleep(0.25 if recorder else 0.4)
         finally:
-            for victim in workers:
+            for slot, victim in enumerate(workers):
                 if victim.frozen and victim.alive:
                     victim.process.send_signal(signal.SIGCONT)
                     victim.frozen_until = None
+                    if recorder:
+                        recorder.set_status(slot, "alive")
+                        recorder.event(
+                            "sigcont", slot=slot, pid=victim.process.pid, worker=victim.worker_id
+                        )
 
             self.stdout.write("draining...")
+            if recorder:
+                recorder.event("drain")
             deadline = time.monotonic() + 60
-            while time.monotonic() < deadline and self.pending_runs():
+            while time.monotonic() < deadline and (
+                self.pending_runs() or OutboxEvent.objects.filter(published_at__isnull=True).exists()
+            ):
+                if recorder:
+                    recorder.sample()
                 time.sleep(0.5)
 
             for process in [*[v.process for v in workers], relay]:
@@ -200,6 +279,17 @@ class Command(BaseCommand):
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
+
+        if recorder:
+            recorder.sample(force=True)
+            for slot in recorder.lanes:
+                recorder.set_status(slot, "stopped")
+            recorder.event("stop")
+            failures, _ = verify.Command().collect_failures(
+                {"expect_runs": options["runs"], "require_published": True}
+            )
+            path = recorder.write(verify.summarise(), failures, kills, freezes)
+            self.stdout.write(f"recorded timeline to {path}")
 
         self.stdout.write("")
         self.stdout.write(

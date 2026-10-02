@@ -9,6 +9,29 @@ def total(field):
     return StepRun.objects.aggregate(n=Sum(field))["n"] or 0
 
 
+def summarise():
+    duplicate_orders = (
+        Charge.objects.values("order_id").annotate(n=Count("id")).filter(n__gt=1).count()
+    )
+    return {
+        "steps": StepRun.objects.count(),
+        "attempts": total("attempt"),
+        "ran_twice": StepRun.objects.filter(attempt__gt=1).count(),
+        "reclaimed_steps": StepRun.objects.filter(reclaimed__gt=0).count(),
+        "reclaims": total("reclaimed"),
+        "effects_performed": total("effects_performed"),
+        "effects_replayed": total("effects_replayed"),
+        "gateway_calls": GatewayCall.objects.count(),
+        "charges": Charge.objects.count(),
+        "charged_twice": duplicate_orders,
+        "runs_completed": WorkflowRun.objects.filter(state=RunState.COMPLETED).count(),
+        "runs_failed": WorkflowRun.objects.filter(state=RunState.FAILED).count(),
+        "runs_cancelled": WorkflowRun.objects.filter(state=RunState.CANCELLED).count(),
+        "outbox_pending": OutboxEvent.objects.filter(published_at__isnull=True).count(),
+        "outbox_published": OutboxEvent.objects.filter(published_at__isnull=False).count(),
+    }
+
+
 class Command(BaseCommand):
     help = "Assert the engine's safety properties over whatever is currently in the database."
 
@@ -85,44 +108,33 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         failures, duplicate_orders = self.collect_failures(options)
-
-        steps = StepRun.objects.count()
-        attempts = total("attempt")
-        reclaimed = total("reclaimed")
-        replayed_effects = total("effects_replayed")
-        performed_effects = total("effects_performed")
-        ran_twice = StepRun.objects.filter(attempt__gt=1).count()
-        reclaimed_steps = StepRun.objects.filter(reclaimed__gt=0).count()
-
-        calls = GatewayCall.objects.count()
-        charges = Charge.objects.count()
+        s = summarise()
 
         write = self.stdout.write
         write("")
         write(self.style.MIGRATE_HEADING("delivery (at least once, by design)"))
-        write(f"  steps                                {steps}")
-        write(f"  step attempts                        {attempts}")
-        write(f"  steps that ran more than once        {ran_twice}")
-        write(f"  steps reclaimed from a dead worker   {reclaimed_steps} ({reclaimed} reclaims)")
+        write(f"  steps                                {s['steps']}")
+        write(f"  step attempts                        {s['attempts']}")
+        write(f"  steps that ran more than once        {s['ran_twice']}")
+        write(f"  steps reclaimed from a dead worker   {s['reclaimed_steps']} ({s['reclaims']} reclaims)")
         write("")
         write(self.style.MIGRATE_HEADING("effects (exactly once, by construction)"))
-        write(f"  external effects performed           {performed_effects}")
-        write(f"  external effects served from cache   {replayed_effects}")
-        write(f"  physical gateway calls               {calls}")
-        write(f"  charges created                      {charges}")
+        write(f"  external effects performed           {s['effects_performed']}")
+        write(f"  external effects served from cache   {s['effects_replayed']}")
+        write(f"  physical gateway calls               {s['gateway_calls']}")
+        write(f"  charges created                      {s['charges']}")
         write(
             f"  orders charged twice                 "
             f"{self.style.ERROR(duplicate_orders) if duplicate_orders else self.style.SUCCESS('0')}"
         )
         write("")
         write(self.style.MIGRATE_HEADING("runs"))
-        write(f"  completed                            {WorkflowRun.objects.filter(state=RunState.COMPLETED).count()}")
-        write(f"  failed                               {WorkflowRun.objects.filter(state=RunState.FAILED).count()}")
-        write(f"  cancelled                            {WorkflowRun.objects.filter(state=RunState.CANCELLED).count()}")
+        write(f"  completed                            {s['runs_completed']}")
+        write(f"  failed                               {s['runs_failed']}")
+        write(f"  cancelled                            {s['runs_cancelled']}")
         write(
             f"  outbox pending / published           "
-            f"{OutboxEvent.objects.filter(published_at__isnull=True).count()}"
-            f" / {OutboxEvent.objects.filter(published_at__isnull=False).count()}"
+            f"{s['outbox_pending']} / {s['outbox_published']}"
         )
         write("")
 

@@ -5,6 +5,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from .attempts import expire_attempt, open_attempt
 from .models import DeadLetter, RunState, StepRun, StepState, WorkflowRun
 from .retry import backoff_seconds
 
@@ -47,6 +48,7 @@ def claim(worker_id, lease_seconds=None, now=None):
                 "started_at",
             ]
         )
+        open_attempt(step, worker_id, now)
 
     WorkflowRun.objects.filter(pk=step.run_id, state=RunState.PENDING).update(
         state=RunState.RUNNING, started_at=now
@@ -92,6 +94,7 @@ def reclaim_expired(now=None, limit=200):
             run = WorkflowRun.objects.select_for_update().get(pk=step.run_id)
 
             if step.attempt >= step.max_attempts:
+                expire_attempt(step, now, buried=True)
                 bury(
                     run,
                     step,
@@ -102,6 +105,7 @@ def reclaim_expired(now=None, limit=200):
                 buried += 1
                 continue
 
+            expire_attempt(step, now, buried=False)
             delay = backoff_seconds(step.attempt)
             step.state = StepState.READY
             step.lease_owner = None

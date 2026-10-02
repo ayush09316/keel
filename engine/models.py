@@ -195,3 +195,43 @@ class Worker(models.Model):
 
     def __str__(self):
         return self.id
+
+
+class AttemptOutcome(models.TextChoices):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    RETRY = "retry"
+    DEAD = "dead"
+    LEASE_EXPIRED = "lease_expired"
+    FENCED = "fenced"
+
+
+class StepAttempt(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="attempts")
+    step = models.ForeignKey(StepRun, on_delete=models.CASCADE, related_name="attempts")
+    attempt = models.IntegerField()
+    worker_id = models.CharField(max_length=128)
+    outcome = models.CharField(
+        max_length=16, choices=AttemptOutcome.choices, default=AttemptOutcome.RUNNING
+    )
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField(null=True, blank=True)
+    reclaimed_at = models.DateTimeField(null=True, blank=True)
+    fenced_at = models.DateTimeField(null=True, blank=True)
+    effects_performed = models.IntegerField(default=0)
+    effects_replayed = models.IntegerField(default=0)
+    events = models.IntegerField(default=0)
+    error_type = models.CharField(max_length=128, blank=True, default="")
+    error = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        db_table = "keel_step_attempt"
+        indexes = [
+            models.Index(fields=["step", "attempt"], name="keel_attempt_step_idx"),
+            models.Index(fields=["worker_id", "finished_at"], name="keel_attempt_worker_idx"),
+        ]
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.step_id}#{self.attempt}"

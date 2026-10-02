@@ -5,18 +5,18 @@ survive worker crashes, third-party flakiness and duplicate delivery — without
 charging the customer twice.
 
 ```
-60 runs · 4 workers · 10 SIGKILL · 7 SIGSTOP
+60 runs · 4 workers · 9 SIGKILL · 7 SIGSTOP
 
 delivery (at least once, by design)
   steps                                240
-  step attempts                        285
-  steps that ran more than once         40
-  steps reclaimed from a dead worker    11
+  step attempts                        300
+  steps that ran more than once         52
+  steps reclaimed from a dead worker    14
 
 effects (exactly once, by construction)
-  external effects performed           238
-  external effects served from cache     2
-  physical gateway calls                72
+  external effects performed           237
+  external effects served from cache     3
+  physical gateway calls                68
   charges created                       60
   orders charged twice                   0   ← the invariant
 ```
@@ -136,7 +136,7 @@ that window, which is exactly why Stripe and Razorpay accept one. `once()` is
 the fast path; the upstream's dedupe is the correctness guarantee.
 
 The demo gateway logs **every physical call** to `demo_gateway_call`, including
-the deduped ones, which is how the summary can report 72 calls against 60
+the deduped ones, which is how the summary can report 68 calls against 60
 charges and prove the gap was absorbed rather than avoided.
 
 ### 5. Transactional outbox: no dual writes
@@ -183,7 +183,9 @@ progress lives in a process.
   latency; polling with backoff was enough here and has one fewer moving part.
 - **The API is unauthenticated.** It is a local demo surface, not a control
   plane. Putting auth on it would be the first thing to do before it ran
-  anywhere real.
+  anywhere real. For a public demo, `KEEL_READONLY=1` makes every mutating
+  endpoint return `403` with an explanation; the dashboard shows a "Read-only
+  demo" badge and disables start, cancel and replay.
 
 ---
 
@@ -197,7 +199,8 @@ python3.11 -m venv venv && ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python manage.py migrate
 ```
 
-Four terminals, or `docker compose up`:
+Four terminals (`make api`, `make worker`, `make relay`, `make web`), or
+`docker compose up`:
 
 ```bash
 ./venv/bin/python manage.py runserver          # API on :8000
@@ -205,6 +208,12 @@ Four terminals, or `docker compose up`:
 ./venv/bin/python manage.py runrelay           # outbox → sink
 cd web && npm install && npm run dev           # dashboard on :3000
 ```
+
+`/` is the landing page; the dashboard lives under `/overview`, `/runs`,
+`/chaos`, `/dead-letters`, `/outbox` and `/workers`. `⌘K` opens a palette that
+jumps to a page, finds a run by id prefix or order id, or starts a workflow;
+`?` lists the keyboard shortcuts. Set `NEXT_PUBLIC_KEEL_API` if the API is not
+on `localhost:8000`.
 
 Then queue some work:
 
@@ -233,10 +242,32 @@ fails the process if any invariant broke:
 
 `manage.py verify` can be run at any time against whatever is in the database.
 
+### Recording and replaying it
+
+`chaos` also records the run to `var/chaos/latest.json` (`--record PATH` to move
+it, `--no-record` to skip): every `SIGKILL`, `SIGSTOP`, `SIGCONT` and respawn
+with its pid and the step the victim was holding, a snapshot every half second
+of which step each worker holds and how long its lease has left, the step and
+run state counts, attempts, reclaims, fenced commits, gateway calls against
+charges, the outbox, and finally the `verify` summary.
+
+`GET /api/chaos/latest/` serves it, falling back to the recording committed at
+`web/public/chaos/sample.json`, and the dashboard's **Chaos replay** page plays
+it back: worker lanes that flash red on a kill, frost over on a freeze, show the
+orphaned step counting down its lease and the reaper taking it back, the stale
+worker's commit being fenced when it wakes — with a scrubber, speeds from 0.5×
+to 8×, an event log, and an `orders charged twice` badge that stays at zero the
+whole way. `?t=21&play=0` opens it paused at a moment.
+
+Reclaims and fences come from a per-attempt log, `keel_step_attempt`: claim
+opens a row, and the commit, the reaper and the fencing path close it inside the
+transactions they already run. It is bookkeeping only — nothing reads it to
+decide anything — and it is also what the run page's attempt timeline draws.
+
 ### Tests
 
 ```bash
-./venv/bin/python -m pytest      # 60 tests
+./venv/bin/python -m pytest      # 85 tests
 ```
 
 Two of them (`test_skip_locked_…`, and the lease-loss cases) need real
@@ -256,6 +287,9 @@ engine/
   worker.py      the loop, the heartbeat thread, graceful shutdown
   registry.py    @workflow / Step declarations
   service.py     start / cancel / replay / stats
+  attempts.py    per-attempt log: opened on claim, closed by commit / reaper / fence
+  recorder.py    chaos timeline: signals, half-second snapshots, verify summary
+  permissions.py KEEL_READONLY guard
   api.py         DRF read models + the three mutations
   management/commands/
     runworker  runrelay  runreaper  seed_demo  chaos  verify
@@ -266,15 +300,17 @@ web/             Next.js 15 + TypeScript + Tailwind dashboard
 ```
 
 The dashboard shows runs with a per-step progress bar, the accumulated context,
-the outbox with publish state, the dead-letter queue with a replay button, and
-workers with their heartbeat — so a worker you kill in one terminal goes stale
-on screen while its steps go back to `ready`.
+the outbox with publish state, the dead-letter queue with bulk replay, and
+workers with a live heartbeat age, the lease each one holds and a throughput
+sparkline — so a worker you kill in one terminal goes stale on screen while its
+steps go back to `ready`.
 
-A run's detail page draws a **timeline** rather than another table, because the
-step list tells you which steps failed but not that the run spent nine of its
-twelve seconds sitting in backoff. On an engine whose subject is retries and
-leases, that gap is the thing worth seeing, and attempts are marked on the bar
-where they happened.
+A run's detail page draws every **attempt** of every step on one clock rather
+than another table, because the step list tells you which steps failed but not
+that the run spent nine of its twelve seconds in backoff, or that attempt 2 was
+a stalled worker whose lease was reclaimed and whose commit was then fenced.
+Each attempt names its lease owner, its outcome, and whether its effect was
+performed or served from the idempotency cache.
 
 ---
 
