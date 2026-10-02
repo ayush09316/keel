@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: keel-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn keel.wsgi --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.10
+      - key: KEEL_SECRET_KEY
+        generateValue: true
+      - key: KEEL_DEBUG
+        value: "0"
+      - key: KEEL_READONLY
+        value: "1"
+      - key: PGSSLMODE
+        value: require
+      - key: KEEL_ALLOWED_HOSTS
+        value: .onrender.com
+      - key: KEEL_CORS_ALL
+        value: "0"
+      - key: KEEL_CORS_ORIGINS
+        sync: false
+      - key: KEEL_DB_HOST
+        sync: false
+      - key: KEEL_DB_NAME
+        sync: false
+      - key: KEEL_DB_USER
+        sync: false
+      - key: KEEL_DB_PASSWORD
+        sync: false
