@@ -49,7 +49,8 @@ export function formatDuration(seconds: number | null | undefined) {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "—";
   if (seconds < 1) return `${Math.max(0, Math.round(seconds * 1000))}ms`;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}m ${whole % 60}s`;
 }
 
 export function formatTime(value: string | null | undefined) {
